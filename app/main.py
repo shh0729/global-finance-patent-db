@@ -379,27 +379,30 @@ def get_filtered_data():
     st.sidebar.divider()
     st.sidebar.subheader("数据筛选")
 
-    years = sorted(df["appln_filing_year"].dropna().astype(int).unique())
-    if years:
-        year_range = st.sidebar.slider(
-            "申请年份范围",
-            min_value=int(min(years)),
-            max_value=int(max(years)),
-            value=(int(min(years)), int(max(years))),
-        )
-        df = df[
-            df["appln_filing_year"].between(year_range[0], year_range[1])
-        ]
+    # 专利检索页面将年份、国家筛选放在页面主体中，便于用户直接看到和操作；
+    # 其他页面继续使用侧边栏的通用筛选。
+    if page != "专利检索":
+        years = sorted(df["appln_filing_year"].dropna().astype(int).unique())
+        if years:
+            year_range = st.sidebar.slider(
+                "申请年份范围",
+                min_value=int(min(years)),
+                max_value=int(max(years)),
+                value=(int(min(years)), int(max(years))),
+            )
+            df = df[
+                df["appln_filing_year"].between(year_range[0], year_range[1])
+            ]
 
-    country_codes = sorted(df["appln_auth"].dropna().astype(str).unique())
-    selected_countries = st.sidebar.multiselect(
-        "申请国家/地区或专利局",
-        country_codes,
-        default=[],
-        format_func=country_name,
-    )
-    if selected_countries:
-        df = df[df["appln_auth"].isin(selected_countries)]
+        country_codes = sorted(df["appln_auth"].dropna().astype(str).unique())
+        selected_countries = st.sidebar.multiselect(
+            "申请国家/地区或专利局",
+            country_codes,
+            default=[],
+            format_func=country_name,
+        )
+        if selected_countries:
+            df = df[df["appln_auth"].isin(selected_countries)]
 
     category_options = sorted(
         {category for categories in df["技术领域分类"] for category in categories}
@@ -507,6 +510,41 @@ if page == "数据总览":
 # =========================================================
 elif page == "专利检索":
     st.header("🔎 金融专利检索")
+
+    # 检索页专属的国家/地区与年份筛选
+    search_base = filtered.copy()
+    search_countries = sorted(data["appln_auth"].dropna().astype(str).unique())
+    selected_search_countries = st.multiselect(
+        "按申请国家/地区筛选（可多选）",
+        options=search_countries,
+        default=search_countries,
+        format_func=country_name,
+        help="默认显示全部申请局；取消不需要的国家/地区即可只查看指定范围。",
+        key="search_country_filter",
+    )
+
+    search_years = sorted(data["appln_filing_year"].dropna().astype(int).unique())
+    if search_years:
+        selected_search_years = st.slider(
+            "按申请年份筛选",
+            min_value=int(min(search_years)),
+            max_value=int(max(search_years)),
+            value=(int(min(search_years)), int(max(search_years))),
+            key="search_year_filter",
+        )
+        search_base = search_base[
+            search_base["appln_filing_year"].between(
+                selected_search_years[0], selected_search_years[1]
+            )
+        ]
+
+    if selected_search_countries:
+        search_base = search_base[
+            search_base["appln_auth"].isin(selected_search_countries)
+        ]
+    else:
+        search_base = search_base.iloc[0:0]
+
     keyword = st.text_input(
         "关键词检索",
         placeholder="输入中文或英文标题、摘要、申请编号",
@@ -517,7 +555,7 @@ elif page == "专利检索":
     )
     selected_cpc = st.selectbox("CPC技术分类", ["全部分类"] + cpc_options)
 
-    result = filtered.copy()
+    result = search_base.copy()
     if keyword:
         term = keyword.lower()
         mask = (
@@ -542,27 +580,34 @@ elif page == "专利检索":
         display = result[
             [
                 "appln_id", "display_title", "appln_auth",
-                "appln_filing_year", "docdb_family_id",
-                "公开记录数", "原文链接",
+                "appln_filing_year", "技术领域分类",
+                "docdb_family_id", "公开记录数", "原文链接",
             ]
         ].copy()
         display["appln_auth"] = display["appln_auth"].apply(country_name)
+        display["技术领域分类"] = display["技术领域分类"].apply(
+            lambda categories: "；".join(categories)
+        )
         display.columns = [
             "申请编号", "专利标题", "申请国家/地区",
-            "申请年份", "专利族编号", "公开记录数", "专利原文",
+            "申请年份", "大致所属类别", "专利族编号",
+            "公开记录数", "原文网址",
         ]
         st.dataframe(
             display,
             use_container_width=True,
             hide_index=True,
             column_config={
-                "专利原文": st.column_config.LinkColumn(
-                    "专利原文",
-                    display_text="打开原文 ↗",
+                "原文网址": st.column_config.LinkColumn(
+                    "原文网址",
+                    help="显示完整网址；点击网址可打开 Google Patents 原文。",
                 )
             },
         )
-        st.caption("点击“打开原文 ↗”即可跳转 Google Patents；若无链接，该单元格为空。")
+        st.caption(
+            f"当前分类方案：{selected_scheme_label}。类别为基于当前分类规则的辅助识别结果；"
+            "原文网址可直接查看或复制。"
+        )
         st.download_button(
             "下载当前检索结果 CSV",
             result.to_csv(index=False).encode("utf-8-sig"),
